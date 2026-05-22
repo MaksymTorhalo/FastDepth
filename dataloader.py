@@ -40,14 +40,14 @@ def apply_transform(batch):
     }
 
 
-train_split = dataset["train"].shuffle(seed=42).with_transform(apply_transform)
+train_split = dataset["train"].with_transform(apply_transform)
 validation_split = dataset["validation"].with_transform(apply_transform)
 
 
 train_loader = DataLoader(
     train_split,
     batch_size=8,
-    shuffle=False,
+    shuffle=True,
     num_workers=0
 )
 
@@ -60,11 +60,14 @@ validation_loader = DataLoader(
 
 
 # Testing
-# i = 0
-# for batch in train_loader:
-#     images = batch["image"]
-#     gt = batch["gt"]
-#     print(images.shape, gt.shape)
-#     i += 1
-#     if i > 100:
-#         break
+# for a in range(0, 5):
+#     i = 0
+#     for batch in train_loader:
+#         images = batch["image"]
+#         gt = batch["gt"]
+#         print(a, "|", i, images.shape, gt.shape)
+#         i += 1
+#         if i > 20:
+#             break
+
+# No need to pre-shuffle before the main loop. Disk can handle by-epoch shuffles. Initial ~40 sec 100% load remains unchanged. Following epochs have 0.1 - 0.5 ms response time and ~23 - 30% load
