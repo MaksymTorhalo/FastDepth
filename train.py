@@ -8,14 +8,37 @@ import torch.optim as optim
 from utils import eval_metrics
 from datetime import datetime
 
+# for daemon thread that saves the intermediate model state
+import threading
+import os
+import sys
+import time
 
 
 
-cudnn.benchmark = True
+
+cudnn.benchmark = True      # let CUDA choose the optimal algorithm for loading data into memory
 save_path = "./models"
+temp_path = "./temp"        # directory for intermediate model states
 
 
-def train(epochs):
+freeze_request = threading.Event()
+exit_request = threading.Event()
+
+def command_listener():
+    for line in sys.stdin:
+        cmd = line.strip().lower()
+
+        if cmd == "/exit":
+            exit_request.set()
+            break
+
+        elif cmd == "/freeze":
+            freeze_request.set()
+            break
+
+
+def train(epochs, resume = False):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Device:", device)
 
@@ -23,16 +46,34 @@ def train(epochs):
     criterion = nn.L1Loss(reduction='mean').to(device)
     optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9, weight_decay=0.0001)
 
-    best_RMSE = float("inf")
+    start_epoch = 0
+    best_rmse = float("inf")
 
-    for epoch in range(epochs):
+
+    if resume and os.path.exists(f"{temp_path}/FastDepth_temp.pth"):
+        checkpoint = torch.load(f"{temp_path}/FastDepth_temp.pth")
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        start_epoch = checkpoint['epoch']
+        best_rmse = checkpoint['best_rmse']
+
+        print(f'Intermediate model state loaded. Resuming training from epoch {start_epoch}.')
+    else:
+        print(f'Intermediate model state not found. Training from scratch.')
+
+
+    listener_thread = threading.Thread(target=command_listener, daemon=True)
+    listener_thread.start()
+
+
+    for epoch in range(start_epoch, epochs):
         print(f'Epoch {epoch} started ---------------')
         model.train()
         total_loss = 0.0
 
         for idx, batch in enumerate(dataloader.train_loader):
             images = batch["image"].to(device)
-            gts = targets["gt"].to(device)
+            gts = batch["gt"].to(device)
 
             optimizer.zero_grad()
 
@@ -49,6 +90,21 @@ def train(epochs):
             if idx % 10 == 0:
                 print(f'Batch {idx}/{len(dataloader.train_loader)} | Train Loss: {loss.item()}')
 
+
+            if freeze_request.is_set():
+                torch.save({'epoch': epoch, 'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict(), 'best_rmse': best_rmse}, f'{temp_path}/FastDepth_temp.pth')
+                print("Intermediate model state saved. Exiting in 3s...")
+                time.sleep(3)
+                sys.exit(0)
+            elif exit_request.is_set():
+                now = datetime.now()
+                t_now = now.strftime("%Y_%m_%d_%H_%M")
+
+                torch.save(model.state_dict(), f'{save_path}/FastDepth_{t_now}.pth')
+                print(f'Model FastDepth_{t_now}.pth saved at {save_path}. Exiting in 3s...')
+                time.sleep(3)
+                sys.exit(0)
+
         avg_loss = total_loss / len(dataloader.train_loader)
         print(f'Epoch Train Loss: {avg_loss} ---------------')
 
@@ -61,7 +117,7 @@ def train(epochs):
         with torch.no_grad():
             for idx, batch in enumerate(dataloader.validation_loader):
                 images = batch["image"].to(device)
-                gts = targets["gt"].to(device)
+                gts = batch["gt"].to(device)
 
                 preds = model(images)
 
@@ -74,8 +130,8 @@ def train(epochs):
 
         print(f'Epoch Validation RMSE: {avg_val_rmse} | Validation Delta 1: {avg_val_delta1}')
 
-        if avg_val_rmse < best_RMSE:
-            best_RMSE = avg_val_rmse
+        if avg_val_rmse < best_rmse:
+            best_rmse = avg_val_rmse
 
             now = datetime.now()
             t_now = now.strftime("%Y_%m_%d_%H_%M")
