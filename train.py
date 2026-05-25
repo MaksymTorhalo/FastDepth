@@ -66,10 +66,21 @@ def train(epochs, resume = False):
     listener_thread.start()
 
 
+    if not resume and start_epoch < 3:
+        for param in model.encoder.parameters():
+            param.requires_grad = False
+            ''' ensure that the pretrained encoder is not 
+            being fitted to a degenerate decoder during
+            initial epochs '''
+
     for epoch in range(start_epoch, epochs):
         print(f'Epoch {epoch} started ---------------')
         model.train()
         total_loss = 0.0
+
+        if epoch == 3:
+            for param in model.encoder.parameters():
+                param.requires_grad = True
 
         for idx, batch in enumerate(dataloader.train_loader):
             images = batch["image"].to(device)
@@ -89,6 +100,8 @@ def train(epochs, resume = False):
 
             if idx % 10 == 0:
                 print(f'Batch {idx}/{len(dataloader.train_loader)} | Train Loss: {loss.item()}')
+
+            del images, gts, preds, loss    # free up memory before garbage collection, results in lower temporal RAM/VRAM usage
 
 
             if freeze_request.is_set():
@@ -124,6 +137,8 @@ def train(epochs, resume = False):
                 rmse, delta1 = eval_metrics(preds, gts)
                 val_rmse += rmse
                 val_delta1 += delta1
+
+                del images, gts, preds  # free up memory before garbage collection, results in lower temporal RAM/VRAM usage
 
         avg_val_rmse = val_rmse / len(dataloader.validation_loader)
         avg_val_delta1 = val_delta1 / len(dataloader.validation_loader)

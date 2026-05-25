@@ -53,12 +53,12 @@ while True:
                 if os.path.exists(f"{sample_path}/{eval_input}"):
                     img = Image.open(f"{sample_path}/{eval_input}").convert("RGB")
                     transform = transforms.Compose([transforms.Resize((224, 224)), transforms.ToTensor(), transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
-                    input = transform(img).unsqueeze(0)
+                    plt.title(f'Prediction for {eval_input}')       # Display proper name of the sample, not the transformed tensor
+                    eval_input = transform(img).unsqueeze(0)
 
-                    out = fastDepth(input).detach().squeeze().numpy()
+                    out = fastDepth(eval_input).detach().squeeze().numpy()
                     plt.imshow(out, cmap="plasma")
                     plt.colorbar(label="Depth [m]")
-                    plt.title(f'Prediction for {eval_input}')
                     plt.show()
                 else:
                     print("Invalid file name. File should be located in the Samples directory.")
@@ -82,4 +82,4 @@ while True:
 
 
 if train_flag:
-    train.train(20, resume_training=False)
+    train.train(20, resume=False)
