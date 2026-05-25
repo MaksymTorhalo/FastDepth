@@ -12,6 +12,7 @@ def eval_metrics(preds, gts):
     gts = gts[valid_mask]
 
     rmse = torch.sqrt(torch.mean((preds - gts)**2))
-    delta1 = float((torch.max(preds/gts, gts/preds) < 1.25).mean())
+    max_ratio = torch.max(preds/gts, gts/preds)
+    delta1 = float((max_ratio < 1.25).float().mean())
 
     return rmse.item(), delta1.item()
