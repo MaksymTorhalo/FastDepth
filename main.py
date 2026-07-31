@@ -57,6 +57,9 @@ while True:
                     eval_input = transform(img).unsqueeze(0)
 
                     out = fastDepth(eval_input).detach().squeeze().numpy()
+
+                    out[:4, :] = 0.5
+
                     plt.imshow(out, cmap="plasma")
                     plt.colorbar(label="Depth [m]")
                     plt.show()
@@ -82,4 +85,4 @@ while True:
 
 
 if train_flag:
-    train.train(20, resume=False)
+    train.train(20, resume=resume_training)

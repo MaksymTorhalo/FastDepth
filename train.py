@@ -7,6 +7,7 @@ import torch.backends.cudnn as cudnn
 import torch.optim as optim
 from utils import eval_metrics
 from datetime import datetime
+from torch.utils.tensorboard import SummaryWriter
 
 # for daemon thread that saves the intermediate model state
 import threading
@@ -20,6 +21,8 @@ import time
 cudnn.benchmark = True      # let CUDA choose the optimal algorithm for loading data into memory
 save_path = "./models"
 temp_path = "./temp"        # directory for intermediate model states
+tensorboard_path = "./tensorboard"
+writer = SummaryWriter(tensorboard_path)
 
 
 freeze_request = threading.Event()
@@ -100,6 +103,7 @@ def train(epochs, resume = False):
 
             if idx % 10 == 0:
                 print(f'Batch {idx}/{len(dataloader.train_loader)} | Train Loss: {loss.item()}')
+                writer.add_scalar('Loss/train', loss.item() , idx + len(dataloader.train_loader) * epoch)
 
             del images, gts, preds, loss    # free up memory before garbage collection, results in lower temporal RAM/VRAM usage
 
@@ -144,6 +148,8 @@ def train(epochs, resume = False):
         avg_val_delta1 = val_delta1 / len(dataloader.validation_loader)
 
         print(f'Epoch Validation RMSE: {avg_val_rmse} | Validation Delta 1: {avg_val_delta1}')
+        writer.add_scalar('RMSE/eval', avg_val_rmse, epoch)
+        writer.add_scalar('Delta1/eval', avg_val_delta1, epoch)
 
         if avg_val_rmse < best_rmse:
             best_rmse = avg_val_rmse
