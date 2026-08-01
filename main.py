@@ -37,35 +37,45 @@ resume_training = False
 while True:
     initial_prompt = input("Load or Train the Model? (l/t): ").strip().lower()
     if initial_prompt == "l":
-        name = input("Please enter the model save file name:")
-        print(f'Loading model {name} from {save_path}')
-        state_dict = torch.load(f"{save_path}/{name}", weights_only=True)
+        name = input("Please enter the model save file name or e to (e)xit:")
+        if name == "e":
+            break
+        else:
+            if os.path.exists(f"{save_path}/{name}"):
+                print(f'Loading model {name} from {save_path}')
+                state_dict = torch.load(f"{save_path}/{name}", weights_only=True)
 
-        fastDepth = model.NNConv5()
-        fastDepth.load_state_dict(state_dict)
-        fastDepth.eval()
+                fastDepth = model.NNConv5()
+                fastDepth.load_state_dict(state_dict)
+                fastDepth.eval()
 
-        while True:
-            eval_input = input("Please enter the full file name of the Sample for evaluation or (e) for exit:")
-            if eval_input == "e":
+                while True:
+                    eval_input = input("Please enter the full file name of the Sample for evaluation or (e) for exit:")
+                    if eval_input == "e":
+                        break
+                    else:
+                        if os.path.exists(f"{sample_path}/{eval_input}"):
+                            img = Image.open(f"{sample_path}/{eval_input}").convert("RGB")
+                            transform = transforms.Compose([transforms.Resize((224, 224)), transforms.ToTensor(),
+                                                            transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                                                                 std=[0.229, 0.224, 0.225])])
+                            plt.title(
+                                f'Prediction for {eval_input}')  # Display proper name of the sample, not the transformed tensor
+                            eval_input = transform(img).unsqueeze(0)
+
+                            out = fastDepth(eval_input).detach().squeeze().numpy()
+
+                            # out[:4, :] = 0.5
+
+                            plt.imshow(out, cmap="plasma")
+                            plt.colorbar(label="Depth [m]")
+                            plt.show()
+                        else:
+                            print("Invalid file name. File should be located in the Samples directory.")
                 break
             else:
-                if os.path.exists(f"{sample_path}/{eval_input}"):
-                    img = Image.open(f"{sample_path}/{eval_input}").convert("RGB")
-                    transform = transforms.Compose([transforms.Resize((224, 224)), transforms.ToTensor(), transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
-                    plt.title(f'Prediction for {eval_input}')       # Display proper name of the sample, not the transformed tensor
-                    eval_input = transform(img).unsqueeze(0)
+                print(f"Invalid file name. File should be located in the {save_path} directory.")
 
-                    out = fastDepth(eval_input).detach().squeeze().numpy()
-
-                    out[:4, :] = 0.5
-
-                    plt.imshow(out, cmap="plasma")
-                    plt.colorbar(label="Depth [m]")
-                    plt.show()
-                else:
-                    print("Invalid file name. File should be located in the Samples directory.")
-        break
     elif initial_prompt == "t":
         train_flag = True
         if os.path.exists(f'{temp_path}/FastDepth_temp.pth'):
