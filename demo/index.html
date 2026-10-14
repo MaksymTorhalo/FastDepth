@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FastDepth Real-Time Camera Feed</title>
+    <!-- Load ONNX Runtime Web CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #121212;
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+
+        h1 {
+            margin-bottom: 20px;
+        }
+
+        .container {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .card {
+            background-color: #1e1e1e;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        video, canvas {
+            border-radius: 4px;
+            width: 320px;
+            height: 320px;
+            object-fit: cover;
+            background-color: #000000;
+        }
+
+        #status {
+            margin-top: 15px;
+            font-size: 1.1em;
+            color: #4caf50;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>FastDepth - Real-Time Web Depth Estimation</h1>
+    
+    <div class="container">
+        <div class="card">
+            <h3>Camera Input</h3>
+            <video id="webcam" autoplay playsinline muted></video>
+        </div>
+        <div class="card">
+            <h3>Predicted Depth Map</h3>
+            <canvas id="depthCanvas" width="224" height="224"></canvas>
+        </div>
+    </div>
+
+    <div id="status">Loading ONNX Model...</div>
+
+    <!-- Hidden canvas used for resizing and pixel extracting -->
+    <canvas id="processingCanvas" width="224" height="224" style="display:none;"></canvas>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const depthCanvas = document.getElementById('depthCanvas');
+        const depthCtx = depthCanvas.getContext('2d');
+        const processCanvas = document.getElementById('processingCanvas');
+        const processCtx = processCanvas.getContext('2d');
+        const statusEl = document.getElementById('status');
+
+        const MODEL_WIDTH = 224;
+        const MODEL_HEIGHT = 224;
+        
+        // ImageNet normalization constants matching your training pipeline
+        const MEAN = [0.485, 0.456, 0.406];
+        const STD = [0.229, 0.224, 0.225];
+
+        let session = null;
+        let isProcessing = false;
+
+        // Simple Plasma-like colormap helper (Maps 0.0-1.0 to RGB)
+        function depthToColor(val) {
+            val = Math.max(0, Math.min(1, val));
+            const r = Math.floor(255 * Math.sin(val * Math.PI * 0.5));
+            const g = Math.floor(255 * Math.sin(val * Math.PI));
+            const b = Math.floor(255 * Math.cos(val * Math.PI * 0.5));
+            return [r, g, b];
+        }
+
+        async function initCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: MODEL_WIDTH, height: MODEL_HEIGHT, facingMode: 'user' }
+                });
+                video.srcObject = stream;
+                return new Promise((resolve) => {
+                    video.onloadedmetadata = () => resolve();
+                });
+            } catch (e) {
+                statusEl.style.color = '#f44336';
+                statusEl.innerText = "Error: Unable to access camera.";
+                throw e;
+            }
+        }
+
+        async function initONNX() {
+            try {
+                // Configure ONNX Runtime to use WebGL backend with WASM fallback
+                ort.env.wasm.numThreads = 2;
+                session = await ort.InferenceSession.create('./fastdepth.onnx', {
+                    executionProviders: ['webgl', 'wasm']
+                });
+                statusEl.innerText = "Model loaded. Estimating depth...";
+            } catch (e) {
+                statusEl.style.color = '#f44336';
+                statusEl.innerText = "Error loading ONNX model. Make sure 'fastdepth.onnx' is in the root directory.";
+                console.error(e);
+            }
+        }
+
+        function preprocessFrame() {
+            // Draw video frame scaled to 224x224
+            processCtx.drawImage(video, 0, 0, MODEL_WIDTH, MODEL_HEIGHT);
+            const imageData = processCtx.getImageData(0, 0, MODEL_WIDTH, MODEL_HEIGHT);
+            const data = imageData.data; // RGBA array
+
+            // Tensor buffer for CHW layout [1, 3, 224, 224]
+            const float32Data = new Float32Array(1 * 3 * MODEL_WIDTH * MODEL_HEIGHT);
+            const planeSize = MODEL_WIDTH * MODEL_HEIGHT;
+
+            for (let i = 0; i < planeSize; i++) {
+                const r = data[i * 4] / 255.0;
+                const g = data[i * 4 + 1] / 255.0;
+                const b = data[i * 4 + 2] / 255.0;
+
+                // Normalize: (val - mean) / std
+                float32Data[i] = (r - MEAN[0]) / STD[0];                   // R channel
+                float32Data[i + planeSize] = (g - MEAN[1]) / STD[1];       // G channel
+                float32Data[i + planeSize * 2] = (b - MEAN[2]) / STD[2];   // B channel
+            }
+
+            return new ort.Tensor('float32', float32Data, [1, 3, MODEL_HEIGHT, MODEL_WIDTH]);
+        }
+
+        async function renderFrame() {
+            if (session && !isProcessing && video.readyState === video.HAVE_ENOUGH_DATA) {
+                isProcessing = true;
+
+                try {
+                    const inputTensor = preprocessFrame();
+                    const outputs = await session.run({ input: inputTensor });
+                    
+                    // Retrieve model prediction output [1, 1, 224, 224]
+                    const outputTensor = outputs.output;
+                    const depthMap = outputTensor.data;
+
+                    // Min-Max normalization for frame visual enhancement
+                    let minDepth = Infinity;
+                    let maxDepth = -Infinity;
+                    for (let i = 0; i < depthMap.length; i++) {
+                        if (depthMap[i] < minDepth) minDepth = depthMap[i];
+                        if (depthMap[i] > maxDepth) maxDepth = depthMap[i];
+                    }
+                    const range = (maxDepth - minDepth) || 1.0;
+
+                    // Render depth visualization onto Canvas
+                    const imgData = depthCtx.createImageData(MODEL_WIDTH, MODEL_HEIGHT);
+                    for (let i = 0; i < depthMap.length; i++) {
+                        const normalized = (depthMap[i] - minDepth) / range;
+                        const [r, g, b] = depthToColor(normalized);
+
+                        imgData.data[i * 4] = r;
+                        imgData.data[i * 4 + 1] = g;
+                        imgData.data[i * 4 + 2] = b;
+                        imgData.data[i * 4 + 3] = 255;
+                    }
+                    depthCtx.putImageData(imgData, 0, 0);
+
+                } catch (err) {
+                    console.error(err);
+                }
+
+                isProcessing = false;
+            }
+
+            requestAnimationFrame(renderFrame);
+        }
+
+        async function main() {
+            await initCamera();
+            await initONNX();
+            renderFrame();
+        }
+
+        main();
+    </script>
+</body>
+</html>
